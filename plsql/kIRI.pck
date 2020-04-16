@@ -4,17 +4,17 @@ CREATE OR REPLACE PACKAGE kIRI_v4 IS
 
    /*##############################################################################
    %desc Launcher of the IRI process of automatic image consolidation.
-   %parm pdDiaAnalisis day to be analyzed, 
+   %parm fpdAnalysisDay day to be analyzed, 
                        if NULL is reported, the system recovers the 
                        value of the CNF parameter "delayConsolidationIRI" and subtract it up to date
    %autr RHE / Raciel Hernandez
    %vers 1A / 31mar'09 / RHE
    */
-   PROCEDURE pEjecutarIRI(pdDiaAnalisis IN DATE DEFAULT NULL);
-   FUNCTION fbListarIRI RETURN BOOLEAN;
-   FUNCTION fbAplicarRNC RETURN BOOLEAN;
-   FUNCTION fbAplicarIRC RETURN BOOLEAN;
-   FUNCTION fbListarIRC RETURN BOOLEAN;
+   PROCEDURE pRunIRI(fpdAnalysisDay IN DATE DEFAULT NULL);
+   FUNCTION pListIRI RETURN BOOLEAN;
+   FUNCTION fbApplyRNC RETURN BOOLEAN;
+   FUNCTION fbApplyIRC RETURN BOOLEAN;
+   FUNCTION fbListIRC RETURN BOOLEAN;
 
 END kIRI_v4;
 /
@@ -27,11 +27,11 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
 
    gvcPkg CONSTANT VARCHAR2(31) := 'kIRI_v4_QA.';
 
-   geBaseAbajo EXCEPTION;
-   PRAGMA EXCEPTION_INIT(geBaseAbajo, -12541);
+   geDBIsDown EXCEPTION;
+   PRAGMA EXCEPTION_INIT(geDBIsDown, -12541);
 
-   geBaseBajando EXCEPTION;
-   PRAGMA EXCEPTION_INIT(geBaseBajando, -01089);
+   geDBIsGoingDown EXCEPTION;
+   PRAGMA EXCEPTION_INIT(geDBIsGoingDown, -01089);
 
    -- #############################################################################
    /**
@@ -61,14 +61,14 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    %desc Obtiene todos los pasos de vehiculos para el dia especificado como parámetro
          de entrada o en su defecto, calculado a partir de delayConsolidacionIRI.
    %autr RHE / Raciel Hernandez
-   %parm pdDiaAnalisis día que se desea analizar, si se informa NULL, el sistema recupera
+   %parm fpdAnalysisDay día que se desea analizar, si se informa NULL, el sistema recupera
                        el valor del parámetro CNF "delayConsolidacionIRI" y lo resta
                        al día actual
    %rtrn TRUE = proceso terminó satisfactoriamente
    %rtrn FALSE = proceso se ejecutó con error
    %vers 1A / 31mar'09/ RHE
-   FUNCTION fbObtenerPvd(pdDiaAnalisis IN DATE) RETURN BOOLEAN IS
-      lvcPrg CONSTANT VARCHAR2(61) := gvcPkg || 'fbObtenerPvd';
+   FUNCTION fbGetPvd(fpdAnalysisDay IN DATE) RETURN BOOLEAN IS
+      lvcPrg CONSTANT VARCHAR2(61) := gvcPkg || 'fbGetPvd';
       ldResume DATE;
       lvIni    VARCHAR2(50);
       lvFin    VARCHAR2(50);
@@ -78,16 +78,16 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
       pDropPVD('PVD_PVDIA');
    
       -- calcula el dia de ejecucion, por defecto es el dia anterior
-      IF pdDiaAnalisis IS NULL THEN
+      IF fpdAnalysisDay IS NULL THEN
          ldResume := TRUNC(SYSDATE, 'dd') -
-                     kCNF.fnRecuperar('delayConsolidacionIRI', 1);
+                     kCNF.fnRetrieve('delayConsolidacionIRI', 1);
       ELSE
-         ldResume := TRUNC(pdDiaAnalisis, 'dd');
+         ldResume := TRUNC(fpdAnalysisDay, 'dd');
       END IF;
    
       -- registra la fecha que se esta procesando
       kBTC.avErrMsg := TO_CHAR(ldResume, '"IRI#"dd/mm/yyyy');
-      kBTC.pGrabarMensaje(200, lvcPrg, TRUE);
+      kBTC.pSaveMessage(200, lvcPrg, TRUE);
    
       -- genera el filtro de dia para los PV
       lvIni := TO_CHAR(ldResume, '"TO_DATE(''"dd/mm/yyyy"'', ''dd/mm/yyyy'')"');
@@ -126,7 +126,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    
       -- registra el fin de creacion
       kBTC.avErrMsg := 'PVD_PVDIA';
-      kBTC.pGrabarMensaje(85, lvcPrg, TRUE);
+      kBTC.pSaveMessage(85, lvcPrg, TRUE);
    
       -- cierra el DBLink para evitar ser eliminado
       EXECUTE IMMEDIATE 'ALTER SESSION CLOSE DATABASE LINK sop';
@@ -136,9 +136,9 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         KBTC.pCrearMensaje(1, lvcPrg, 'STD', TRUE);
+         KBTC.pCreateMessage(1, lvcPrg, 'STD', TRUE);
          RETURN FALSE;
-   END fbObtenerPvd;
+   END fbGetPvd;
 
 
    -- #############################################################################
@@ -153,18 +153,18 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    */
    FUNCTION fbPvdMCero RETURN BOOLEAN IS
       lvcPrg CONSTANT VARCHAR2(61) := gvcPkg || 'fbPvdMCero';
-      lvComando VARCHAR2(250);
+      lvCommand VARCHAR2(250);
    BEGIN
       -- elimina la tabla actualmente existente
       pDropPVD('PVD_PVDMCERO');
    
       -- crea la tabla
-      lvComando := 'CREATE TABLE pvd_pvdmcero TABLESPACE tempssc_data PCTFREE 0 NOLOGGING AS SELECT * FROM pvd_pvdia';
-      EXECUTE IMMEDIATE lvComando;
+      lvCommand := 'CREATE TABLE pvd_pvdmcero TABLESPACE tempssc_data PCTFREE 0 NOLOGGING AS SELECT * FROM pvd_pvdia';
+      EXECUTE IMMEDIATE lvCommand;
    
       -- actualiza los registros que no van a CM
-      lvComando := 'UPDATE pvd_pvdmcero SET pvd_matricula = pvd_matriculaocr, pvd_categoria = pvd_categoriaocr WHERE pvd_enviocm IS NOT NULL';
-      EXECUTE IMMEDIATE lvComando;
+      lvCommand := 'UPDATE pvd_pvdmcero SET pvd_matricula = pvd_matriculaocr, pvd_categoria = pvd_categoriaocr WHERE pvd_enviocm IS NOT NULL';
+      EXECUTE IMMEDIATE lvCommand;
       COMMIT;
    
       -- crea los indices
@@ -173,7 +173,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    
       -- registra el fin
       kBTC.avErrMsg := 'PVD_PDVMCERO';
-      kBTC.pGrabarMensaje(85, lvcPrg, TRUE);
+      kBTC.pSaveMessage(85, lvcPrg, TRUE);
    
       RETURN TRUE;
    
@@ -181,7 +181,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
       WHEN OTHERS THEN
          ROLLBACK;
          kBTC.avErrMsg := SQLERRM;
-         KBTC.pCrearMensaje(1, lvcPrg, 'STD', TRUE);
+         KBTC.pCreateMessage(1, lvcPrg, 'STD', TRUE);
          RETURN FALSE;
    END fbPvdMCero;
 
@@ -206,12 +206,12 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    
       laScan     tString;
       lnInd      PLS_INTEGER;
-      lvPrograma VARCHAR2(30) := gvcPkg || 'fbResumeUDV';
+      lvProgram VARCHAR2(30) := gvcPkg || 'fbResumeUDV';
    
    BEGIN
       -- registro de inicio ResumeUDV
       kBTC.avErrMsg := 'resume_UDV';
-      kBTC.pGrabarMensaje(142, lvPrograma, TRUE);
+      kBTC.pSaveMessage(142, lvProgram, TRUE);
    
       -- elimina el indice
       EXECUTE IMMEDIATE 'DROP INDEX udv_idx_pcpatente';
@@ -309,7 +309,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
             lvMrk_Pat  := NULL;
             ldMrk_Date := NULL;
             lvMark     := NULL;
-            kbtc.pIniciarCommit(55000, ''' || lvPrograma ||
+            kbtc.pInitCommit(55000, ''' || lvProgram ||
                         ''');
             FOR lrPV IN lcPVs LOOP
                DECLARE
@@ -468,8 +468,8 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
                EXCEPTION
                   WHEN no_data_found THEN
                      kBTC.avErrMsg := SQLERRM;
-                     kBTC.pGrabarMensaje(1, ''' ||
-                        lvPrograma || ''', TRUE);
+                     kBTC.pSaveMessage(1, ''' ||
+                        lvProgram || ''', TRUE);
                END;
             END LOOP;
             kBTC.pFinalizarCommit;
@@ -493,13 +493,13 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    
       -- registro de fin
       kBTC.avErrMsg := 'resume_UDV';
-      kBTC.pGrabarMensaje(85, lvPrograma, TRUE);
+      kBTC.pSaveMessage(85, lvProgram, TRUE);
       RETURN TRUE;
    
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvPrograma, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvProgram, 'STD', TRUE);
          RETURN FALSE;
    END fbResumeUDV;
 
@@ -514,28 +514,28 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    %param pnRef2 Portico de referencia 2.
    %return NUMBER Distancia entre los porticos pnRef1 y pnRef2.
    */
-   FUNCTION fnDistanciaEP(pnRef1 PLS_INTEGER, pnRef2 PLS_INTEGER) RETURN NUMBER IS
-      lvcPrg CONSTANT VARCHAR2(61) := gvcPkg || 'fnDistanciaEP';
-      lnDistancia NUMBER(12);
+   FUNCTION fnDistanceEP(pnRef1 PLS_INTEGER, pnRef2 PLS_INTEGER) RETURN NUMBER IS
+      lvcPrg CONSTANT VARCHAR2(61) := gvcPkg || 'fnDistanceEP';
+      lnDistance NUMBER(12);
    BEGIN
       -- obtiene la distancia entre porticos
       SELECT dtn_nm_distancia
-        INTO lnDistancia
+        INTO lnDistance
         FROM dtn
        WHERE dtn_fk_prt = pnRef1
          AND dtn_fk_srf = pnRef2;
-      RETURN(lnDistancia);
+      RETURN(lnDistance);
    EXCEPTION
       WHEN no_data_found THEN
          RETURN NULL;
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pGrabarMensaje(1,
+         kBTC.pSaveMessage(1,
                              lvcPrg,
                              TRUE,
                              TO_CHAR(pnRef1) || '/' || TO_CHAR(pnRef2));
          RETURN NULL;
-   END fnDistanciaEP;
+   END fnDistanceEP;
 
 
    -- #############################################################################
@@ -553,7 +553,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    %param pvDelimitador Caracter delimitador de los elementos del vector.
    %return lvIRI Vector que contiene el valor de IRI calculado.
    */
-   PROCEDURE pCalcularIRI(pvSecuence    VARCHAR2,
+   PROCEDURE lnpCalculateIRI(pvSecuence    VARCHAR2,
                           pvInterval    VARCHAR2,
                           pvVelocidad   VARCHAR2,
                           pvCategoria   VARCHAR2 := '',
@@ -600,7 +600,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    
       TYPE arrayIRI IS ARRAY(259) OF INTEGER; --identificador de ruta inicial
    
-      --lvPrograma VARCHAR2(25) := gvcPrograma || 'pCalcularIRI';
+      --lvProgram VARCHAR2(25) := gvcPrograma || 'lnpCalculateIRI';
    
    BEGIN
       DECLARE
@@ -735,7 +735,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
                   laTar.EXTEND(1);
                
                
-                  laDpc(lnIdx) := fnDistanciaEP(laSec(lnIdx), laSec(lnIdx - 1));
+                  laDpc(lnIdx) := fnDistanceEP(laSec(lnIdx), laSec(lnIdx - 1));
                
                   IF laDpc(lnIdx) IS NOT NULL THEN
                      laIRI(lnIdx) := 1;
@@ -828,7 +828,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
          
          END;
       END;
-   END pCalcularIRI;
+   END lnpCalculateIRI;
 
 
    -- #############################################################################
@@ -840,8 +840,8 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    %return TRUE Si el proceso termina satisfactoriamente.
    %return FALSE Si el proceso se ejecuta con error.
    */
-   FUNCTION fbConformarIRI RETURN BOOLEAN IS
-      lvPrograma VARCHAR2(25) := gvcPkg || 'fbConformarIRI';
+   FUNCTION fbConformingIRI RETURN BOOLEAN IS
+      lvProgram VARCHAR2(25) := gvcPkg || 'fbConformingIRI';
       -- cursor scan
       CURSOR lcDSPs IS
          SELECT COLUMN_VALUE AS Item, 0 AS Done
@@ -864,12 +864,12 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    BEGIN
       --registro de inicio
       kBTC.avErrMsg := 'conformar_IRI';
-      kBTC.pGrabarMensaje(142, lvPrograma, TRUE);
+      kBTC.pSaveMessage(142, lvProgram, TRUE);
    
       FOR lrDSP IN lcDSPs LOOP
-         kBTC.pIniciarCommit(50000, lvPrograma);
+         kBTC.pInitCommit(50000, lvProgram);
          FOR lrRM IN lcRMs(lrDSP.item) LOOP
-            pCalcularIRI(lrRM.vR,
+            lnpCalculateIRI(lrRM.vR,
                          lrRM.vI,
                          lrRM.vVe,
                          lrRM.vC,
@@ -887,15 +887,15 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    
       --registro de fin
       kBTC.avErrMsg := 'conformar_IRI';
-      kBTC.pGrabarMensaje(85, lvPrograma, FALSE);
+      kBTC.pSaveMessage(85, lvProgram, FALSE);
       RETURN TRUE;
    
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvPrograma, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvProgram, 'STD', TRUE);
          RETURN FALSE;
-   END fbConformarIRI;
+   END fbConformingIRI;
 
 
    -- #############################################################################
@@ -928,7 +928,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pGrabarMensaje(1, lvcPrg, TRUE);
+         kBTC.pSaveMessage(1, lvcPrg, TRUE);
          RETURN NULL;
    END fvVectorX;
 
@@ -944,9 +944,9 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    %param pvCharSplit Caracter delimitador entre los elementos del vector.
    %return INTEGER Tamaño del vector.
    */
-   FUNCTION fnVectorTam(pvVector IN VARCHAR2, pvCharSplit IN VARCHAR2 := ';')
+   FUNCTION fnVectorSize(pvVector IN VARCHAR2, pvCharSplit IN VARCHAR2 := ';')
       RETURN PLS_INTEGER IS
-      lvcPrg CONSTANT VARCHAR2(61) := gvcPkg || 'fnVectorTam';
+      lvcPrg CONSTANT VARCHAR2(61) := gvcPkg || 'fnVectorSize';
       lnSize PLS_INTEGER;
       lnPos  PLS_INTEGER;
    BEGIN
@@ -973,10 +973,10 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pGrabarMensaje(1, lvcPrg, TRUE);
+         kBTC.pSaveMessage(1, lvcPrg, TRUE);
          RETURN lnSize;
       
-   END fnVectorTam;
+   END fnVectorSize;
 
 
    -- #############################################################################
@@ -1034,7 +1034,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pGrabarMensaje(1, lvcPrg, TRUE);
+         kBTC.pSaveMessage(1, lvcPrg, TRUE);
          RETURN NULL;
       
    END fvVectorItem;
@@ -1061,7 +1061,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
       lvVectorRepl VARCHAR2(5000);
    
    BEGIN
-      lnVectorSize := fnVectorTam(lvVector, ';');
+      lnVectorSize := fnVectorSize(lvVector, ';');
    
       -- recorrer cada elemento
       FOR i IN 1 .. lnVectorSize LOOP
@@ -1087,7 +1087,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pGrabarMensaje(1, lvcPrg, TRUE);
+         kBTC.pSaveMessage(1, lvcPrg, TRUE);
          RETURN NULL;
    END fvReplaceAll;
 
@@ -1104,16 +1104,16 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    %param pnFromItem Posicion de inicio de la busqueda.
    %return INTEGER Posicion donde se encuentra el elemento.
    */
-   FUNCTION fnBuscarItem(pvVector   IN VARCHAR2,
+   FUNCTION fnSearhItem(pvVector   IN VARCHAR2,
                          pvSearchX  IN VARCHAR2,
                          pnFromItem IN PLS_INTEGER := 1) RETURN PLS_INTEGER IS
-      lvcPrg CONSTANT VARCHAR2(61) := gvcPkg || 'fnBuscarItem';
+      lvcPrg CONSTANT VARCHAR2(61) := gvcPkg || 'fnSearhItem';
       lvVector     VARCHAR2(5000) := pvVector;
       lvItemValue  VARCHAR2(5000);
       lnVectorSize PLS_INTEGER;
-   
+
    BEGIN
-      lnVectorSize := fnVectorTam(lvVector, ';');
+      lnVectorSize := fnVectorSize(lvVector, ';');
    
       -- si el inicio de busqueda esta fuera de rango devuelve nulo
       IF pnFromItem > lnVectorSize THEN
@@ -1136,9 +1136,9 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pGrabarMensaje(1, lvcPrg, TRUE);
+         kBTC.pSaveMessage(1, lvcPrg, TRUE);
          RETURN NULL;
-   END fnBuscarItem;
+   END fnSearhItem;
 
 
    -- #############################################################################
@@ -1180,8 +1180,8 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
          RETURN 1;
       END IF;
    
-      lnVectorSize := fnVectorTam(lvVector, ';');
-      lnSegmenSize := fnVectorTam(pvSearchXS, ';');
+      lnVectorSize := fnVectorSize(lvVector, ';');
+      lnSegmenSize := fnVectorSize(pvSearchXS, ';');
    
       -- si esta fuera de rango devolver nulo
       IF lnFromItem > lnVectorSize OR
@@ -1225,7 +1225,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pGrabarMensaje(1, lvcPrg, TRUE);
+         kBTC.pSaveMessage(1, lvcPrg, TRUE);
          RETURN NULL;
    END fnBuscarSeg;
 
@@ -1240,7 +1240,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    %vers 1B / 13oct'09 / S&S > se agrega parámetro CNF para la cantidad de pórticos
    */
    FUNCTION fbIRIConsPat RETURN BOOLEAN IS
-      lvPrograma VARCHAR2(25) := gvcPkg || 'fbIRIConsPat';
+      lvProgram VARCHAR2(25) := gvcPkg || 'fbIRIConsPat';
       CURSOR lcIRIs IS
          SELECT udv_tx_vpv,
                 udv_tx_vcategoria,
@@ -1256,14 +1256,14 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
       lvIRI         VARCHAR2(4000);
       lvIRIMatch    VARCHAR2(4000);
       lnPv          PLS_INTEGER;
-      lnPorts       PLS_INTEGER := kCNF.fnRecuperar('cantidadPorticosIRI', 2);
+      lnPorts       PLS_INTEGER := kCNF.fnRetrieve('cantidadPorticosIRI', 2);
    BEGIN
       -- registro de inicio
       kBTC.avErrMsg := 'predictor_PAT';
-      kBTC.pGrabarMensaje(142, lvPrograma, TRUE);
+      kBTC.pSaveMessage(142, lvProgram, TRUE);
    
       -- fija la frecuencia de COMMIT
-      kBTC.pIniciarCommit(2000, lvPrograma);
+      kBTC.pInitCommit(2000, lvProgram);
    
       --construye el match a buscar
       lvIRIMatch := fvVectorX('1', lnPorts - 1, ';');
@@ -1274,7 +1274,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
          lvCatVal_IRI  := NULL;
       
          -- cantidad de PV resumidos en IRI
-         lnPv := fnVectorTam(lrIRI.udv_tx_viri, ';') + 1;
+         lnPv := fnVectorSize(lrIRI.udv_tx_viri, ';') + 1;
       
          IF lnPv >= lnPorts THEN
             -- recorre cada pv
@@ -1319,14 +1319,14 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    
       -- registro de fin
       kBTC.avErrMsg := 'predictor_PAT';
-      kBTC.pGrabarMensaje(85, lvPrograma, FALSE);
+      kBTC.pSaveMessage(85, lvProgram, FALSE);
    
       RETURN TRUE;
    
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvPrograma, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvProgram, 'STD', TRUE);
          RETURN FALSE;
    END fbIRIConsPat;
 
@@ -1351,7 +1351,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
                  instr(udv_tx_viri, '2', 1) <> 0 OR
                  instr(udv_tx_viri, '3', 1) <> 0);
    
-      lvPrograma  VARCHAR2(30) := gvcPkg || 'fbMarcaUICat';
+      lvProgram  VARCHAR2(30) := gvcPkg || 'fbMarcaUICat';
       lnPv        PLS_INTEGER;
       lnItem      PLS_INTEGER;
       lvUICat     VARCHAR2(4000);
@@ -1360,7 +1360,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
       lvCatPvProx VARCHAR2(1);
    
    BEGIN
-      kBTC.pIniciarCommit(2100, lvPrograma);
+      kBTC.pInitCommit(2100, lvProgram);
       FOR lrVEH IN lcVEHs LOOP
          -- inicializacion de variable
          lvUICat     := NULL;
@@ -1369,7 +1369,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
          lvCatPvProx := NULL;
       
          -- cantidad de PV
-         lnPv := fnVectorTam(lrVEH.udv_tx_viri, ';');
+         lnPv := fnVectorSize(lrVEH.udv_tx_viri, ';');
       
          FOR lnItem IN 1 .. lnPv LOOP
             lvCatPv     := fvVectorItem(lrVEH.udv_tx_vcategoria, lnItem, ';');
@@ -1425,7 +1425,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvPrograma, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvProgram, 'STD', TRUE);
          RETURN FALSE;
    END fbMarcaUICat;
 
@@ -1447,17 +1447,17 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
                  instr(udv_tx_viri, '2', 1) <> 0 OR
                  instr(udv_tx_viri, '3', 1) <> 0);
    
-      lvPrograma   VARCHAR2(30) := gvcPkg || 'fbMarcaUILon';
+      lvProgram   VARCHAR2(30) := gvcPkg || 'fbMarcaUILon';
       lnPv         PLS_INTEGER;
       lnItem       PLS_INTEGER;
       lvUILon      VARCHAR2(4000);
       lvMeanLon    VARCHAR2(4000);
       lnDisper     NUMBER;
       lnMedia      NUMBER;
-      lnUmbralDesv NUMBER := kCNF.fnRecuperar('maximaDispersionLargos', 30);
+      lnUmbralDesv NUMBER := kCNF.fnRetrieve('maximaDispersionLargos', 30);
    
    BEGIN
-      kBTC.pIniciarCommit(2100, lvPrograma);
+      kBTC.pInitCommit(2100, lvProgram);
       FOR lrVEH IN lcVEHs LOOP
          -- inicializacion de variable
          lvUILon   := NULL;
@@ -1466,7 +1466,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
          lnDisper  := NULL;
       
          -- cantidad de PV
-         lnPv := fnVectorTam(lrVEH.udv_tx_viri, ';');
+         lnPv := fnVectorSize(lrVEH.udv_tx_viri, ';');
       
          FOR lnItem IN 1 .. lnPv LOOP
             lnMedia := (to_number(fvVectorItem(lrVEH.udv_tx_largototal,
@@ -1517,7 +1517,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvPrograma, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvProgram, 'STD', TRUE);
          RETURN FALSE;
    END fbMarcaUILon;
 
@@ -1539,19 +1539,19 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
                  instr(udv_tx_viri, '2', 1) <> 0 OR
                  instr(udv_tx_viri, '3', 1) <> 0);
    
-      lvPrograma VARCHAR2(30) := gvcPkg || 'fbMarcaUICat';
+      lvProgram VARCHAR2(30) := gvcPkg || 'fbMarcaUICat';
       lnPv       PLS_INTEGER;
       lnItem     PLS_INTEGER;
       lvUIRem    VARCHAR2(4000);
    
    BEGIN
-      kBTC.pIniciarCommit(2100, lvPrograma);
+      kBTC.pInitCommit(2100, lvProgram);
       FOR lrVEH IN lcVEHs LOOP
          -- inicializacion de variable
          lvUIRem := NULL;
       
          -- cantidad de PV
-         lnPv := fnVectorTam(lrVEH.udv_tx_viri, ';');
+         lnPv := fnVectorSize(lrVEH.udv_tx_viri, ';');
       
          FOR lnItem IN 1 .. lnPv LOOP
             IF fvVectorItem(lrVEH.udv_tx_remolque, lnItem, ';') =
@@ -1580,7 +1580,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvPrograma, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvProgram, 'STD', TRUE);
          RETURN FALSE;
    END fbMarcaUIRem;
 
@@ -1604,18 +1604,18 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
            FROM udv_udvia u
           WHERE udv_tx_pvnoavi IS NOT NULL
             AND udv_tx_vuicategoria IS NOT NULL;
-      lvPrograma VARCHAR2(30) := gvcPkg || 'fbIRIConsCat';
+      lvProgram VARCHAR2(30) := gvcPkg || 'fbIRIConsCat';
       lnCantPvs  PLS_INTEGER;
       lnTotalPvs PLS_INTEGER;
       lnPosPv    PLS_INTEGER;
-      lnPorts    PLS_INTEGER := kCNF.fnRecuperar('cantidadPorticosIRI', 2);
+      lnPorts    PLS_INTEGER := kCNF.fnRetrieve('cantidadPorticosIRI', 2);
       lvCATPv    VARCHAR2(4);
       lvPvnoAvi  VARCHAR2(18);
       lvIRICat   VARCHAR2(4000);
       lvUICMatch VARCHAR2(50) := fvVectorX('1', lnPorts - 1, ';');
       lbMatch    BOOLEAN;
    BEGIN
-      kBTC.pIniciarCommit(1700, lvPrograma);
+      kBTC.pInitCommit(1700, lvProgram);
    
       FOR lrPV IN lcPVs LOOP
          --construye el match a buscar
@@ -1624,8 +1624,8 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
          lvIRICat  := NULL;
       
          -- cantidad de pv a consolidar
-         lnCantPVs  := fnVectorTam(lrPV.udv_tx_pvnoavi);
-         lnTotalPvs := fnVectorTam(lrPV.udv_tx_vpv);
+         lnCantPVs  := fnVectorSize(lrPV.udv_tx_pvnoavi);
+         lnTotalPvs := fnVectorSize(lrPV.udv_tx_vpv);
       
          IF INSTR(lrPV.udv_tx_vuicategoria, '0', 1) = 0 THEN
             -- no hay incoherencia de categoria en todo el uso de via
@@ -1640,7 +1640,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
                -- obtiene el pv para el cual IRI tiene prediccion de patente
                lvPvnoAvi := fvVectorItem(lrPV.udv_tx_pvnoavi, i);
                -- busca la posicion del pv
-               lnPosPV := fnBuscarItem(lrPV.udv_tx_vpv, lvPvnoAvi);
+               lnPosPV := fnSearhItem(lrPV.udv_tx_vpv, lvPvnoAvi);
                -- inicializa variable match
                lbMatch := FALSE;
                -- por cada lnPorts
@@ -1696,7 +1696,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvPrograma, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvProgram, 'STD', TRUE);
          RETURN FALSE;
    END fbIRIConsCat;
 
@@ -1732,10 +1732,10 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
          EXECUTE IMMEDIATE 'DROP TABLE tl_cu_matriculas2';
       
       EXCEPTION
-         WHEN geBaseAbajo OR geBaseBajando THEN
+         WHEN geDBIsDown OR geDBIsGoingDown THEN
             --> BD CRM no disponible
             kBTC.avErrMsg := 'tl_cu_matriculas';
-            kBTC.pGrabarMensaje(199, lvcPrg, TRUE); --199?
+            kBTC.pSaveMessage(199, lvcPrg, TRUE); --199?
       END;
    
       --cierra el dblink con el SOP
@@ -1756,7 +1756,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', TRUE);
          RETURN FALSE;
    END fbObtenerDCVeh;
 
@@ -1770,8 +1770,8 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    %return FALSE Si el proceso se ejecuta con error
    */
 
-   FUNCTION fbAplicarRNC RETURN BOOLEAN IS
-      lvcPrg CONSTANT VARCHAR2(30) := gvcPkg || 'fbAplicarRNC';
+   FUNCTION fbApplyRNC RETURN BOOLEAN IS
+      lvcPrg CONSTANT VARCHAR2(30) := gvcPkg || 'fbApplyRNC';
       CURSOR lcUDVs IS
          SELECT udv_tx_vpv,
                 udv_tx_pvnoavi,
@@ -1786,7 +1786,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
            FROM udv_udvia u
           WHERE udv_tx_pvnoavicat IS NOT NULL;
    
-      lnPorts          PLS_INTEGER := kCNF.fnRecuperar('cantidadPorticosIRI', 2);
+      lnPorts          PLS_INTEGER := kCNF.fnRetrieve('cantidadPorticosIRI', 2);
       lvCatRNC         VARCHAR2(5);
       lvAplRNC         VARCHAR2(5);
       lvIDRNC          VARCHAR2(5);
@@ -1799,7 +1799,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
       lvPv             VARCHAR2(25);
       lnItemPv         PLS_INTEGER;
       lvRemolque       VARCHAR2(1);
-      lnUmbralLong     PLS_INTEGER := kCNF.fnRecuperar('umbralLargoTotal', 1000);
+      lnUmbralLong     PLS_INTEGER := kCNF.fnRetrieve('umbralLargoTotal', 1000);
       lnLongitudProm   NUMBER;
       lvUIRemolque     VARCHAR2(1);
       lvUILong         VARCHAR2(1);
@@ -1807,15 +1807,15 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
       lvUIMatch        VARCHAR2(50) := fvVectorX('1', lnPorts - 1, ';');
    
    BEGIN
-      kBTC.pIniciarCommit(1700, lvcPrg);
+      kBTC.pInitCommit(1700, lvcPrg);
    
       FOR lrUDV IN lcUDVs LOOP
          lvCatRNCudv := NULL;
          lvIDRNCudv  := NULL;
          lvAplRNCudv := NULL;
       
-         lvCantPV  := fnVectorTam(lrUDV.udv_tx_pvnoavi); --pv a consolidar
-         lvTotalPV := fnVectorTam(lrUDV.udv_tx_vpv); --total de pv
+         lvCantPV  := fnVectorSize(lrUDV.udv_tx_pvnoavi); --pv a consolidar
+         lvTotalPV := fnVectorSize(lrUDV.udv_tx_vpv); --total de pv
       
          FOR i IN 1 .. lvCantPV LOOP
             lvCatRNC         := NULL;
@@ -1825,7 +1825,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
             lvLargoSupUmbral := NULL;
          
             lvPv       := fvVectorItem(lrUDV.udv_tx_pvnoavi, i);
-            lnItemPv   := fnBuscarItem(lrUDV.udv_tx_vpv, lvPv);
+            lnItemPv   := fnSearhItem(lrUDV.udv_tx_vpv, lvPv);
             lvCatIRI   := fvVectorItem(lrUDV.udv_tx_pvnoavicat, i);
             lvRemolque := fvVectorItem(lrUDV.udv_tx_remolque, lnItemPv);
          
@@ -1938,9 +1938,9 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', TRUE);
          RETURN FALSE;
-   END fbAplicarRNC;
+   END fbApplyRNC;
 
    -- #############################################################################
    /**
@@ -1997,10 +1997,10 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
          CLOSE lcINFs;
       
       EXCEPTION
-         WHEN geBaseAbajo OR geBaseBajando THEN
+         WHEN geDBIsDown OR geDBIsGoingDown THEN
             --> BD CRM no disponible
             kBTC.avErrMsg := 'lzin_lista_imp';
-            kBTC.pGrabarMensaje(199, lvcPrg, TRUE);
+            kBTC.pSaveMessage(199, lvcPrg, TRUE);
       END;
    
       --carga excepciones de AVI
@@ -2035,10 +2035,10 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
          CLOSE lcAVIs;
       
       EXCEPTION
-         WHEN geBaseAbajo OR geBaseBajando THEN
+         WHEN geDBIsDown OR geDBIsGoingDown THEN
             --> BD CRM no disponible
             kBTC.avErrMsg := 'lzin_lista_imp';
-            kBTC.pGrabarMensaje(199, lvcPrg, TRUE);
+            kBTC.pSaveMessage(199, lvcPrg, TRUE);
       END;
    
       -- graba
@@ -2058,7 +2058,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
       WHEN OTHERS THEN
          ROLLBACK;
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', TRUE);
          RETURN FALSE;
    END fbActualizarEXM;
 
@@ -2085,19 +2085,19 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
           WHERE udv_nm_excepcion IS NULL;
       lnRlg      PLS_INTEGER;
       lnValid    PLS_INTEGER;
-      lvPrograma VARCHAR2(30) := gvcPkg || 'fbGestionExcep';
+      lvProgram VARCHAR2(30) := gvcPkg || 'fbGestionExcep';
    BEGIN
       -- registra inicio
       kBTC.avErrMsg := 'excepciones_IRI';
-      kBTC.pGrabarMensaje(142, lvPrograma, TRUE);
+      kBTC.pSaveMessage(142, lvProgram, TRUE);
    
       -- actualiza la tabla de excepciones AVI e INF
       IF NOT fbActualizarEXM THEN
-         kBTC.pGrabarMensaje(1, lvPrograma, FALSE);
+         kBTC.pSaveMessage(1, lvProgram, FALSE);
       END IF;
    
       -- fija la frecuencia de COMMIT
-      kBTC.pIniciarCommit(12500, lvPrograma);
+      kBTC.pInitCommit(12500, lvProgram);
    
       -- verifica excepcionalidad para cada patente
       FOR lrVLD IN lcVLDs LOOP
@@ -2151,14 +2151,14 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    
       -- registro de fin
       kBTC.avErrMsg := 'excepciones_IRI';
-      kBTC.pGrabarMensaje(85, lvPrograma, TRUE);
+      kBTC.pSaveMessage(85, lvProgram, TRUE);
    
       RETURN TRUE;
    
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvPrograma, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvProgram, 'STD', TRUE);
          RETURN FALSE;
    END fbGestionExi;
 
@@ -2170,9 +2170,9 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    %return TRUE Si el proceso termina satisfactoriamente.
    %return FALSE Si el proceso se ejecuta con error.
    */
-   FUNCTION fbSonConsecutivos(pvPort01 VARCHAR2, pvPort02 VARCHAR2) RETURN BOOLEAN IS
+   FUNCTION fbIsConsecutivePorticos(pvPort01 VARCHAR2, pvPort02 VARCHAR2) RETURN BOOLEAN IS
    
-      lvPrg VARCHAR2(30) := gvcPkg || 'fbSonConsecutivos';
+      lvPrg VARCHAR2(30) := gvcPkg || 'fbIsConsecutivePorticos';
    
       CURSOR lcSCNs IS
          SELECT '<' || a.trm_tx_vrecsn || ';><' || a.trm_tx_vrecns || ';>' AS Secuencia
@@ -2198,9 +2198,9 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvPrg, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvPrg, 'STD', TRUE);
          RETURN FALSE;
-   END fbSonConsecutivos;
+   END fbIsConsecutivePorticos;
 
    -- #############################################################################
    /**
@@ -2257,7 +2257,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvPrg, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvPrg, 'STD', TRUE);
          RETURN FALSE;
       
    END fbSecuenciaIRI_1nX1;
@@ -2293,13 +2293,13 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
       lvAdXMark VARCHAR2(500);
    
    BEGIN
-      kbtc.pIniciarCommit(5000, lvPrg);
+      kbtc.pInitCommit(5000, lvPrg);
       FOR lrIRI IN lcIRIs LOOP
          lvPort01         := NULL;
          lvPort02         := NULL;
          lvIRI_1nX1       := NULL;
          lvRecorrido_1nX1 := NULL;
-         lnSize           := fnVectorTam(lrIRI.udv_tx_viri) + 1;
+         lnSize           := fnVectorSize(lrIRI.udv_tx_viri) + 1;
       
          FOR i IN 1 .. lnSize LOOP
             lvSecXPort       := NULL;
@@ -2312,10 +2312,10 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
          
             IF lvIRI IN ('1', 2, 3) THEN
                --// evaluar a futuro todos los IRI <> 0
-               IF NOT fbSonConsecutivos(lvPort01, lvPort02) THEN
+               IF NOT fbIsConsecutivePorticos(lvPort01, lvPort02) THEN
                   IF fbSecuenciaIRI_1nX1(lvPort01, lvPort02, lvSecXPort) THEN
                      lvRecorrido_1nX1 := lvRecorrido_1nX1 || ';' || lvSecXPort;
-                     lnAdd            := fnVectorTam(lvSecXPort, ';');
+                     lnAdd            := fnVectorSize(lvSecXPort, ';');
                      lvAdXMark        := fvVectorX('x', lnAdd);
                      lvIRI_1nX1       := lvIRI_1nX1 || ';' || lvAdXMark;
                   END IF;
@@ -2344,7 +2344,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvPrg, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvPrg, 'STD', TRUE);
          RETURN FALSE;
       
    END fbMarcarRegionIRC;
@@ -2358,9 +2358,9 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    %return TRUE Si el proceso termina satisfactoriamente.
    %return FALSE Si el proceso se ejecuta con error.
    */
-   FUNCTION fbConformarIRC RETURN BOOLEAN IS
+   FUNCTION fbConformIRC RETURN BOOLEAN IS
    
-      lvPrg VARCHAR2(30) := gvcPkg || 'fbConformarIRC';
+      lvPrg VARCHAR2(30) := gvcPkg || 'fbConformIRC';
    
       CURSOR lcIRIs IS
          SELECT udv_tx_patente,
@@ -2416,7 +2416,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
       --EXECUTE IMMEDIATE 'CREATE INDEX drop_idx_portfechamat ON pvd_pvdmcero(pvd_portico,pvd_fecha, pvd_matricula)';
       EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_DATE_FORMAT = ''dd/mm/yyyy hh24:mi:ss''';
    
-      kbtc.pIniciarCommit(200, lvPrg);
+      kbtc.pInitCommit(200, lvPrg);
    
       FOR lrIRI IN lcIRIs LOOP
          lvIRI_XItem   := NULL;
@@ -2575,7 +2575,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
                                                                 lnItemIRI));
                               lvC1    := fvVectorItem(lrIRI.udv_tx_vcategoria,
                                                       lnItemIRI);
-                              lnDep   := fnDistanciaEP(lnPort1, lnPortico);
+                              lnDep   := fnDistanceEP(lnPort1, lnPortico);
                            
                               lvT1 := to_char(ldIntvInf, 'hh24:mi:ss');
                               lnT1 := to_number(substr(lvT1, 1, 2)) * 3600 +
@@ -2710,33 +2710,33 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
          dbms_output.put_line(kBTC.avErrMsg);
-         kBTC.pCrearMensaje(1, lvPrg, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvPrg, 'STD', TRUE);
          RETURN FALSE;
-   END fbConformarIRC;
+   END fbConformIRC;
 
    -- #############################################################################
    /**
    Aplica IRC.
    Aplica el algoritmo de información de ruta corregida.
-   %author RHE / Raciel Hernandez (CleverGlobal S.A.)
+   %author RHE / Raciel Hernandez
    %version 1A / 14Jun'09/ RHE
    %return TRUE Si el proceso termina satisfactoriamente.
    %return FALSE Si el proceso se ejecuta con error.
    */
-   FUNCTION fbAplicarIRC RETURN BOOLEAN IS
-      lvcPrg CONSTANT VARCHAR2(61) := gvcPkg || 'fbAplicarIRC';
+   FUNCTION fbApplyIRC RETURN BOOLEAN IS
+      lvcPrg CONSTANT VARCHAR2(61) := gvcPkg || 'fbApplyIRC';
    BEGIN
       --Marca las regiones IRC      
       IF NOT fbMarcarRegionIRC THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', TRUE);
          RETURN FALSE;
       END IF;
    
       --Conforma IRC
-      IF NOT fbConformarIRC THEN
+      IF NOT fbConformIRC THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', TRUE);
          RETURN FALSE;
       END IF;
    
@@ -2745,9 +2745,9 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', TRUE);
          RETURN FALSE;
-   END fbAplicarIRC;
+   END fbApplyIRC;
 
    -- #############################################################################
    /**
@@ -2760,7 +2760,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    %return TRUE Si el proceso termina satisfactoriamente.
    %return FALSE Si el proceso se ejecuta con error.
    */
-   FUNCTION fbListarIRI RETURN BOOLEAN IS
+   FUNCTION pListIRI RETURN BOOLEAN IS
       CURSOR lcPATs IS
          SELECT udv_tx_patente,
                 udv_tx_pvnoavi,
@@ -2772,7 +2772,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
           WHERE udv_tx_pvnoavi IS NOT NULL
             AND udv_nm_excepcion = 0;
    
-      lvPrograma VARCHAR2(30) := gvcPkg || 'fbListarIRI';
+      lvProgram VARCHAR2(30) := gvcPkg || 'pListIRI';
    
       lvCAT  VARCHAR2(7);
       lnCAT  NUMBER(1);
@@ -2785,7 +2785,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
       EXECUTE IMMEDIATE 'TRUNCATE TABLE piri_propuestas_iri';
    
       -- fija la frecuencia de COMMIT;
-      kBTC.pIniciarCommit(1000, lvPrograma);
+      kBTC.pInitCommit(1000, lvProgram);
    
       -- determian los datos que se consolidaran
       FOR lrPAT IN lcPATs LOOP
@@ -2838,7 +2838,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
          ELSE
             -- hay varios pv por UDV
             -- cantidad de pv a consolidar automaticamente por UDV
-            lnLong := fnVectorTam(lrPAT.udv_tx_pvnoavi);
+            lnLong := fnVectorSize(lrPAT.udv_tx_pvnoavi);
          
             -- por cada pv
             FOR j IN 1 .. lnLong LOOP
@@ -2894,10 +2894,10 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvPrograma, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvProgram, 'STD', TRUE);
          dbms_output.put_line(kBTC.avErrMsg);
          RETURN FALSE;
-   END fbListarIRI;
+   END pListIRI;
 
    -- #############################################################################
    /**
@@ -2908,7 +2908,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    %return TRUE Si el proceso termina satisfactoriamente.
    %return FALSE Si el proceso se ejecuta con error.
    */
-   FUNCTION fbListarIRC RETURN BOOLEAN IS
+   FUNCTION fbListIRC RETURN BOOLEAN IS
       CURSOR lcIRCs IS
          SELECT udv_tx_patente,
                 udv_tx_pvnoavi,
@@ -2924,7 +2924,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
                 instr(udv_tx_virc, 'n', 1) <> 0)
             AND udv_nm_excepcion = 0;
    
-      lvPrograma VARCHAR2(30) := gvcPkg || 'fbListarIRC';
+      lvProgram VARCHAR2(30) := gvcPkg || 'fbListIRC';
    
       lvCAT  VARCHAR2(7);
       lnCAT  NUMBER(1);
@@ -2936,7 +2936,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    BEGIN
    
       -- fija la frecuencia de COMMIT;
-      kBTC.pIniciarCommit(1000, lvPrograma);
+      kBTC.pInitCommit(1000, lvProgram);
    
       -- determian los datos que se consolidaran
       FOR lrIRC IN lcIRCs LOOP
@@ -2947,7 +2947,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
          lvRNC := NULL;
          lvApl := NULL;
       
-         lnItem := fnVectorTam(lrIRC.udv_tx_virc, ';');
+         lnItem := fnVectorSize(lrIRC.udv_tx_virc, ';');
          FOR i IN 1 .. lnItem LOOP
             IF fvVectorItem(lrIRC.udv_tx_virc, i) IN ('k', 't') THEN
                lnPV := to_number(fvVectorItem(lrIRC.udv_tx_vpvcomposer, i));
@@ -2980,10 +2980,10 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvPrograma, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvProgram, 'STD', TRUE);
          dbms_output.put_line(kBTC.avErrMsg);
          RETURN FALSE;
-   END fbListarIRC;
+   END fbListIRC;
 
    /*##############################################################################
    %desc Envia PV de IRI a SOP para consolidar automaticamente, comprobando en forma
@@ -3000,7 +3000,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
            FROM piri
           WHERE piri_nm_categoria = 1
              OR piri_nm_categoria IS NULL;
-      lvPrograma CONSTANT VARCHAR2(61) := gvcPkg || 'fbEnviar2SOP';
+      lvProgram CONSTANT VARCHAR2(61) := gvcPkg || 'fbEnviar2SOP';
    BEGIN
       -- verifica si se configuro el envio
       IF kCNF.fvRecuperar('enviarIRI2SOP', 'F') = 'V' THEN
@@ -3008,7 +3008,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
             IF NOT kENV.fbEnviar_0001(lrIRI.piri_nm_pv,
                                       lrIRI.piri_tx_patente,
                                       lrIRI.piri_nm_categoria) THEN
-               kBTC.pGrabarMensaje(1, lvPrograma, FALSE, lrIRI.piri_nm_pv);
+               kBTC.pSaveMessage(1, lvProgram, FALSE, lrIRI.piri_nm_pv);
             END IF;
          
          END LOOP;
@@ -3017,7 +3017,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
          COMMIT;
       
       ELSE
-         kBTC.pGrabarMensaje(196, lvPrograma, TRUE);
+         kBTC.pSaveMessage(196, lvProgram, TRUE);
       END IF;
    
       RETURN TRUE;
@@ -3025,7 +3025,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvPrograma, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvProgram, 'STD', TRUE);
          RETURN FALSE;
    END fbEnviar2SOP;
 
@@ -3034,7 +3034,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    %desc Ejectua el procesamiento IRI para el día especificado como parámetro
          de entrada o en su defecto, calculado a partir de delayConsolidacionIRI, para
          la consolidación automática de los PV de la AVI.
-   %parm pdDiaAnalisis día que se desea analizar, si se informa NULL, el sistema recupera
+   %parm fpdAnalysisDay día que se desea analizar, si se informa NULL, el sistema recupera
                        el valor del parámetro CNF "delayConsolidacionIRI" y lo resta
                        al día actual
    %rtrn TRUE Si el proceso termina satisfactoriamente.
@@ -3045,78 +3045,78 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
               que permite la ejecución en modo prueba y modo productivo. El modo productivo
               envía los datos de IRI a SOP, el modo prueba no.
    */
-   FUNCTION fbEjecutarIRI(pdDiaAnalisis IN DATE) RETURN BOOLEAN IS
+   FUNCTION fbEjecutarIRI(fpdAnalysisDay IN DATE) RETURN BOOLEAN IS
       lvcPrg CONSTANT VARCHAR2(61) := gvcPkg || 'fbEjecutarIRI';
    BEGIN
       -- crea la copia local de PV para un dia
-      IF NOT fbObtenerPVD(pdDiaAnalisis) THEN
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', FALSE);
+      IF NOT fbObtenerPVD(fpdAnalysisDay) THEN
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', FALSE);
          RETURN FALSE;
       END IF;
    
       -- crea la tabla PVD_PVDMCERO
       IF NOT fbPvdMCero THEN
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', FALSE);
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', FALSE);
          RETURN FALSE;
       END IF;
    
       -- resume UDV
       IF NOT fbResumeUDV THEN
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', FALSE);
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', FALSE);
          RETURN FALSE;
       END IF;
    
       -- conformamos la matriz de rutas IRI de UDV
-      IF NOT fbConformarIRI THEN
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', FALSE);
+      IF NOT fbConformingIRI THEN
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', FALSE);
          RETURN FALSE;
       END IF;
    
       -- prediccion de patentes segun IRI
       IF NOT fbIRIConsPat THEN
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', FALSE);
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', FALSE);
          RETURN FALSE;
       END IF;
    
       -- marca de incoherencia de categoria en ruta
       IF NOT fbMarcaUICat THEN
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', FALSE);
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', FALSE);
          RETURN FALSE;
       END IF;
    
       -- marca de incoherencia de longitud en ruta
       IF NOT fbMarcaUILon THEN
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', FALSE);
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', FALSE);
          RETURN FALSE;
       END IF;
    
       -- marca de incoherencia de remolque en ruta
       IF NOT fbMarcaUIRem THEN
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', FALSE);
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', FALSE);
          RETURN FALSE;
       END IF;
    
       -- consolidacion de la categoria en ruta
       IF NOT fbIRIConsCat THEN
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', FALSE);
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', FALSE);
          RETURN FALSE;
       END IF;
    
       -- gestion de excecciones IRI
       IF NOT fbGestionExi THEN
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', FALSE);
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', FALSE);
          RETURN FALSE;
       END IF;
    
       --obtiene los datos de categorías para cada vehículo     
       IF NOT fbObtenerDCVeh THEN
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', FALSE);
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', FALSE);
          RETURN FALSE;
       END IF;
    
       --aplica RNC para consolidación de categorías     
-      IF NOT fbAplicarRNC THEN
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', FALSE);
+      IF NOT fbApplyRNC THEN
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', FALSE);
          RETURN FALSE;
       END IF;
    
@@ -3126,8 +3126,8 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
       END IF;
    
       -- lista los pv con prediccion de patente y categoria
-      IF NOT fbListarIRI THEN
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', FALSE);
+      IF NOT pListIRI THEN
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', FALSE);
          RETURN FALSE;
       END IF;
    
@@ -3136,7 +3136,7 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
       -- registra en la interfaz el envio de PV para consolidacion IRI      
       /*
       IF NOT fbEnviar2SOP THEN
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', FALSE);
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', FALSE);
          RETURN FALSE;
       END IF;
       */
@@ -3146,14 +3146,14 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    EXCEPTION
       WHEN OTHERS THEN
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pCrearMensaje(1, lvcPrg, 'STD', TRUE);
+         kBTC.pCreateMessage(1, lvcPrg, 'STD', TRUE);
          RETURN FALSE;
    END fbEjecutarIRI;
 
 
    -- #############################################################################
-   PROCEDURE pEjecutarIRI(pdDiaAnalisis IN DATE DEFAULT NULL) IS
-      lvcPrg CONSTANT VARCHAR2(61) := gvcPkg || 'pEjecutarIRI';
+   PROCEDURE pRunIRI(fpdAnalysisDay IN DATE DEFAULT NULL) IS
+      lvcPrg CONSTANT VARCHAR2(61) := gvcPkg || 'pRunIRI';
    BEGIN
       -- fija la zona horaria para que los mensajes queden con al hora correcta
       EXECUTE IMMEDIATE 'ALTER SESSION SET TIME_ZONE = ''Chile/Continental''';
@@ -3163,23 +3163,23 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    
       -- registra el inicio de ejecucion
       kBTC.avErrMsg := 'IRI';
-      kBTC.pGrabarMensaje(142, lvcPrg, TRUE);
+      kBTC.pSaveMessage(142, lvcPrg, TRUE);
    
       -- ejecuta el algoritmo IRI
-      IF NOT fbEjecutarIRI(pdDiaAnalisis) THEN
-         kBTC.pGrabarMensaje(1, lvcPrg, FALSE);
+      IF NOT fbEjecutarIRI(fpdAnalysisDay) THEN
+         kBTC.pSaveMessage(1, lvcPrg, FALSE);
       END IF;
    
       -- registra el fin de ejecucion
       kBTC.avErrMsg := 'IRI';
-      kBTC.pGrabarMensaje(85, lvcPrg, TRUE);
+      kBTC.pSaveMessage(85, lvcPrg, TRUE);
    
    EXCEPTION
       WHEN OTHERS THEN
          ROLLBACK;
          kBTC.avErrMsg := SQLERRM;
-         kBTC.pGrabarMensaje(1, lvcPrg, TRUE);
-   END pEjecutarIRI;
+         kBTC.pSaveMessage(1, lvcPrg, TRUE);
+   END pRunIRI;
 
 END kIRI_v4;
 /
