@@ -3,10 +3,10 @@ CREATE OR REPLACE PACKAGE kIRI_v4 IS
    TYPE tString IS TABLE OF VARCHAR2(4000);
 
    /*##############################################################################
-   %desc Lanzador del proceso IRI de consolidacion automatica de imagenes.
-   %parm pdDiaAnalisis día que se desea analizar, si se informa NULL, el sistema recupera
-                       el valor del parámetro CNF "delayConsolidacionIRI" y lo resta
-                       al día actual
+   %desc Launcher of the IRI process of automatic image consolidation.
+   %parm pdDiaAnalisis day to be analyzed, 
+                       if NULL is reported, the system recovers the 
+                       value of the CNF parameter "delayConsolidationIRI" and subtract it up to date
    %autr RHE / Raciel Hernandez
    %vers 1A / 31mar'09 / RHE
    */
