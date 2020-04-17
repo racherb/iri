@@ -17,7 +17,7 @@ CREATE OR REPLACE PACKAGE kIRI_v4 IS
    FUNCTION fbListIRC RETURN BOOLEAN;
 
 END kIRI_v4;
-/
+
 CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    /**
    Consolidacion automatica de imagenes en base al modelo IRI
@@ -3182,4 +3182,3 @@ CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    END pRunIRI;
 
 END kIRI_v4;
-/
