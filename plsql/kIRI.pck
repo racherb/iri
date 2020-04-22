@@ -20,9 +20,9 @@ END kIRI_v4;
 
 CREATE OR REPLACE PACKAGE BODY kIRI_v4 IS
    /**
-   Consolidacion automatica de imagenes en base al modelo IRI
-   Aplicacion de las matrices de rutas a la verificacion de imagenes en AVI.
-   Se basa en el modelo de informacion de ruta inicial (IRI) y consolida para rutas entre N porticos.
+   Automatic image consolidation based on the IRI model
+   Application of route matrices to image verification in AVI.
+   It is based on the initial route information model (IRI) and consolidates for routes between N porticos.
    */
 
    gvcPkg CONSTANT VARCHAR2(31) := 'kIRI_v4_QA.';
